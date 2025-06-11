@@ -3,7 +3,7 @@
 Privoxy Log Analyzer
 
 Проект для анализа лог файла прокси сервера Privoxy.
-Анализирует количество и частоту запросов к anthropic.com.
+Анализирует количество и частоту запросов к указанному домену.
 """
 
 import re
@@ -48,21 +48,24 @@ def load_env_file(env_file_path: str = ".env") -> Dict[str, str]:
 class PrivoxyLogAnalyzer:
     def __init__(self, ssh_host: str = "10.1.1.1", ssh_user: str = "root", 
                  log_path: str = "/var/log/privoxy.log", data_dir: str = "data",
+                 target_domain: str = "example.com",
                  upload_host: str = None, upload_user: str = None, upload_path: str = None):
         self.ssh_host = ssh_host
         self.ssh_user = ssh_user
         self.log_path = log_path
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
+        self.target_domain = target_domain
         
         # Параметры для загрузки отчета
         self.upload_host = upload_host
         self.upload_user = upload_user
         self.upload_path = upload_path
         
-        # Регулярное выражение для парсинга строк лога
+        # Регулярное выражение для парсинга строк лога (с экранированием точек в домене)
+        escaped_domain = target_domain.replace('.', '\\.')
         self.log_pattern = re.compile(
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \w+ Request: (api\.anthropic\.com:\d+/)'
+            rf'(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}}\.\d{{3}}) \w+ Request: ({escaped_domain}:\d+/)'
         )
     
     def connect_ssh(self) -> paramiko.SSHClient:
@@ -129,7 +132,7 @@ class PrivoxyLogAnalyzer:
     def generate_report(self) -> str:
         """Генерация отчета по всем сохраненным данным"""
         report = []
-        report.append("# Отчет по запросам к anthropic.com\n")
+        report.append(f"# Отчет по запросам к {self.target_domain}\n")
         
         total_requests = 0
         all_hourly = Counter()
@@ -356,6 +359,8 @@ def main():
                        help='Путь к лог файлу на сервере')
     parser.add_argument('--data-dir', default=env_vars.get('PRIVOXY_DATA_DIR', 'data'), 
                        help='Локальная директория для данных')
+    parser.add_argument('--target-domain', default=env_vars.get('PRIVOXY_TARGET_DOMAIN', 'example.com'), 
+                       help='Целевой домен для анализа')
     
     # Параметры для загрузки отчета
     parser.add_argument('--upload', action='store_true', help='Загрузить отчет на веб-сервер')
@@ -378,17 +383,20 @@ def main():
         ssh_user=args.user,
         log_path=args.log_path,
         data_dir=args.data_dir,
+        target_domain=args.target_domain,
         upload_host=upload_host,
         upload_user=upload_user,
         upload_path=upload_path
     )
     
     try:
-        report = analyzer.run_analysis(upload_report=args.upload)
-        print("\n" + "="*50)
-        print("ОТЧЕТ:")
-        print("="*50)
-        print(report)
+        analyzer.run_analysis(upload_report=args.upload)
+        # Подсчитываем количество JSON файлов для краткой статистики
+        json_files = list(analyzer.data_dir.glob("*.json"))
+        print(f"Анализ завершен. Обработано дней: {len(json_files)}")
+        print("Отчет сохранен в data/report.md")
+        if args.upload:
+            print("Отчет загружен на веб-сервер")
     except Exception as e:
         print(f"Ошибка: {e}")
 

@@ -29,22 +29,45 @@ UPLOAD_PATH="${PRIVOXY_UPLOAD_PATH:-~/public_html/reports}"
 
 log "=== Запуск Privoxy Log Analyzer ==="
 
-# Проверяем наличие conda
-if ! command -v conda &> /dev/null; then
+# Ищем conda в различных стандартных местах
+CONDA_PATHS=(
+    "/home/$(whoami)/miniforge3/bin/conda"
+    "/home/$(whoami)/miniconda3/bin/conda"
+    "/home/$(whoami)/anaconda3/bin/conda"
+    "/opt/conda/bin/conda"
+    "/usr/local/bin/conda"
+)
+
+CONDA_EXE=""
+for path in "${CONDA_PATHS[@]}"; do
+    if [[ -x "$path" ]]; then
+        CONDA_EXE="$path"
+        break
+    fi
+done
+
+# Если conda не найдена в стандартных местах, попробуем через PATH
+if [[ -z "$CONDA_EXE" ]] && command -v conda &> /dev/null; then
+    CONDA_EXE=$(which conda)
+fi
+
+if [[ -z "$CONDA_EXE" ]]; then
     log "Ошибка: conda не найдена. Установите Anaconda или Miniconda."
     exit 1
 fi
 
+log "Используется conda: $CONDA_EXE"
+
 # Инициализируем conda для bash
-eval "$(conda shell.bash hook)" 2>/dev/null || {
+eval "$("$CONDA_EXE" shell.bash hook)" 2>/dev/null || {
     log "Ошибка: не удалось инициализировать conda"
     exit 1
 }
 
 # Проверяем существование окружения
-if ! conda env list | grep -q "^${ENV_NAME}\s"; then
+if ! "$CONDA_EXE" env list | grep -q "^${ENV_NAME}\s"; then
     log "Создание conda окружения ${ENV_NAME}..."
-    conda env create -f "${SCRIPT_DIR}/environment.yml" >> "$LOG_FILE" 2>&1
+    "$CONDA_EXE" env create -f "${SCRIPT_DIR}/environment.yml" >> "$LOG_FILE" 2>&1
     log "Окружение создано."
 else
     log "Окружение ${ENV_NAME} уже существует."
