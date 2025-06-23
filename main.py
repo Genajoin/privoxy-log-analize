@@ -293,6 +293,7 @@ class PrivoxyLogAnalyzer:
         html_lines.append("        tr:nth-child(even) { background-color: #f9f9f9; }")
         html_lines.append("        .session-active { background-color: #e8f5e8 !important; }")
         html_lines.append("        .session-rest { background-color: #fff !important; }")
+        html_lines.append("        .predicted-next-session { background-color: #ffebee !important; border: 2px solid #f44336 !important; }")
         html_lines.append("        .timestamp { color: #888; font-size: 0.9em; float: right; }")
         html_lines.append("        .date-header { background-color: #2196F3 !important; color: white; font-weight: bold; }")
         html_lines.append("        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0; }")
@@ -403,7 +404,80 @@ class PrivoxyLogAnalyzer:
         # Сортируем дни в обратном порядке (свежие сверху)
         sorted_days = sorted(days_data.keys(), reverse=True)
         
-        for day in sorted_days:
+        # Определяем прогнозируемый час и дату начала следующей сессии
+        predicted_next_session_hour = None
+        predicted_next_session_date = None
+        predicted_is_next_day = False
+        
+        if sorted_days:
+            latest_day = sorted_days[0]
+            latest_day_data = days_data[latest_day]
+            
+            # Находим активные сессии в последнем дне
+            active_sessions = []
+            for row in latest_day_data:
+                date, time, queries, session_num = row
+                if int(session_num) > 0 and int(queries) > 0:
+                    hour = int(time.split(':')[0])
+                    active_sessions.append((hour, int(session_num)))
+            
+            if active_sessions:
+                # Сортируем по часам и берем последнюю активность
+                active_sessions.sort()
+                last_active_hour, last_session_num = active_sessions[-1]
+                
+                # Находим начало этой сессии - ищем первый час с этим номером сессии
+                session_start_hour = None
+                for row in latest_day_data:
+                    date, time, queries, session_num = row
+                    if int(session_num) == last_session_num:
+                        hour = int(time.split(':')[0])
+                        if session_start_hour is None or hour < session_start_hour:
+                            session_start_hour = hour
+                
+                # Прогнозируем начало следующей сессии (через 5 часов после начала текущей)
+                if session_start_hour is not None:
+                    next_session_raw_hour = session_start_hour + 5
+                    
+                    if next_session_raw_hour >= 24:
+                        # Следующая сессия на следующий день
+                        predicted_next_session_hour = next_session_raw_hour % 24
+                        predicted_is_next_day = True
+                        # Вычисляем дату следующего дня
+                        latest_date = datetime.strptime(latest_day, '%Y-%m-%d').date()
+                        next_date = latest_date + timedelta(days=1)
+                        predicted_next_session_date = next_date.strftime('%Y-%m-%d')
+                    else:
+                        # Следующая сессия в том же дне
+                        predicted_next_session_hour = next_session_raw_hour
+                        predicted_next_session_date = latest_day
+                        predicted_is_next_day = False
+        
+        for day_index, day in enumerate(sorted_days):
+            # Если это первый (самый свежий) день и прогноз на следующий день
+            if (day_index == 0 and predicted_is_next_day and 
+                predicted_next_session_hour is not None and predicted_next_session_date):
+                
+                # Добавляем строки для следующего дня (от 00:00 до прогнозируемого часа)
+                for hour in range(predicted_next_session_hour + 1):
+                    time_str = f"{hour:02d}:00"
+                    
+                    if hour == predicted_next_session_hour:
+                        # Прогнозируемый час - красная строка
+                        css_class = "predicted-next-session"
+                        session_display = "ПРОГНОЗ: Следующая сессия"
+                    else:
+                        # Обычные часы отдыха
+                        css_class = "session-rest"
+                        session_display = "-"
+                    
+                    html_lines.append(f"                <tr class='{css_class}'>")
+                    html_lines.append(f"                    <td>{predicted_next_session_date}</td>")
+                    html_lines.append(f"                    <td>{time_str}</td>")
+                    html_lines.append(f"                    <td>0</td>")
+                    html_lines.append(f"                    <td>{session_display}</td>")
+                    html_lines.append("                </tr>")
+            
             # Вычисляем статистику для дня
             day_data = days_data[day]
             day_requests = sum(int(row[2]) for row in day_data)
@@ -421,15 +495,25 @@ class PrivoxyLogAnalyzer:
             # Добавляем строки для каждого часа дня (в обратном порядке 23:00-00:00)
             for row in reversed(day_data):
                 date, time, queries, session_num = row
+                hour = int(time.split(':')[0])
                 
                 # Определяем CSS класс для строки
                 css_class = "session-active" if int(session_num) > 0 else "session-rest"
+                
+                # Если это последний день и час совпадает с прогнозируемым началом следующей сессии (в том же дне)
+                if (day == sorted_days[0] and not predicted_is_next_day and 
+                    predicted_next_session_hour is not None and 
+                    hour == predicted_next_session_hour and int(session_num) == 0):
+                    css_class = "predicted-next-session"
+                    session_display = "ПРОГНОЗ: Следующая сессия"
+                else:
+                    session_display = session_num if int(session_num) > 0 else '-'
                 
                 html_lines.append(f"                <tr class='{css_class}'>")
                 html_lines.append(f"                    <td>{date}</td>")
                 html_lines.append(f"                    <td>{time}</td>")
                 html_lines.append(f"                    <td>{queries}</td>")
-                html_lines.append(f"                    <td>{session_num if int(session_num) > 0 else '-'}</td>")
+                html_lines.append(f"                    <td>{session_display}</td>")
                 html_lines.append("                </tr>")
         
         html_lines.append("            </tbody>")
